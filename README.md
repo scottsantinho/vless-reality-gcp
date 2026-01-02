@@ -203,6 +203,56 @@ Why they matter:
 
 ---
 
+## Client Setup
+
+### Retrieving Your VLESS Configuration
+
+After deployment, you need to get the VLESS connection URL from your VPS. SSH into the server and run:
+
+```bash
+ssh root@<your-vps-ip>
+cat /etc/xray/client_url.txt
+```
+
+This outputs a URL that looks like:
+
+```
+vless://uuid@ip:port?encryption=none&flow=xtls-rprx-vision&security=reality&sni=example.com&fp=chrome&pbk=publickey&sid=shortid&type=tcp#ServerName
+```
+
+Copy this entire URL.
+
+### macOS: Happ (Free)
+
+1. Install [Happ](https://apps.apple.com/app/id6504287215) from the App Store
+2. Copy the VLESS URL to your clipboard
+3. Open Happ and click "Add from Clipboard"
+4. The server appears in your list, ready to connect
+
+![Happ Configuration](assets/happ-config.png)
+
+### iOS: Shadowrocket ($2.99)
+
+1. Install [Shadowrocket](https://apps.apple.com/app/id932747118) from the App Store
+2. Copy the VLESS URL to your clipboard
+3. Open Shadowrocket and tap the "+" button
+4. Select "Add from Clipboard"
+5. The server is added to your list
+
+![Shadowrocket Configuration](assets/shadowrocket-config.PNG)
+
+### Verifying the Connection
+
+Once connected, verify your traffic is going through the VPS:
+
+```bash
+curl -s ifconfig.me
+```
+
+This should return your VPS IP, not your local IP.
+
+---
+
 ## CI/CD Pipeline
 
 The pipeline uses GitOps: code changes trigger automated deployments, with previews and gates along the way.
