@@ -21,24 +21,7 @@ I wanted something that:
 
 ## Architecture at a Glance
 
-```
-┌───────────────────────────────────────────────────────────────────┐
-│                        GitHub Repository                          │
-│  (Terraform configs, Fleet definitions, Cloud Build pipelines)   │
-└───────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼  merge to main
-┌───────────────────────────────────────────────────────────────────┐
-│                      GCP Control Plane                            │
-│  Cloud Build (CI/CD)  •  Secret Manager  •  Cloud Logging         │
-└───────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼  SSH deploy
-┌───────────────────────────────────────────────────────────────────┐
-│                         VPS Fleet                                 │
-│  Multiple Xray nodes across different regions                     │
-└───────────────────────────────────────────────────────────────────┘
-```
+![Architecture Diagram](assets/architecture_diagram.png)
 
 ---
 
@@ -289,12 +272,21 @@ The pipeline uses GitOps: code changes trigger automated deployments, with previ
 
 Infrastructure changes must complete before fleet deployment. If Terraform creates a new secret, the fleet reconciler needs that secret to exist when it runs. The trigger chain ensures this ordering.
 
+### A Note on Environments
+
+In a production setup, you'd typically have separate environments (dev, staging, prod) with their own GCP projects and VPS fleets. Changes would promote through each environment before reaching production.
+
+For this project, I use a single environment. The reasons are practical: I don't want to pay for VPS instances in multiple environments for a personal side project. The preview deployment (`im-preview`) gives me a safe way to validate Terraform changes before they apply, which covers most of the risk that multiple environments would address.
+
 ---
 
 ## Repository Structure
 
 ```
-custom-vpn/
+vless-reality-gcp/
+├── assets/                        # Documentation assets
+│   └── architecture_diagram.png   # Architecture diagram
+│
 ├── cloudbuild/                    # CI/CD pipeline definitions
 │   ├── _env.sh                    # Shared config (project ID, etc.)
 │   ├── ci-lint.yaml               # Security scanning and linting
@@ -313,7 +305,6 @@ custom-vpn/
 │       └── xray-logrotate.conf    # Log rotation settings
 │
 ├── infra/terraform/envs/prod/     # GCP infrastructure (Terraform)
-│   ├── main.tf                    # Provider and environment setup
 │   ├── apis.tf                    # Required GCP APIs
 │   ├── service_accounts.tf        # Service accounts and IAM
 │   ├── secrets.tf                 # Secret Manager resources
