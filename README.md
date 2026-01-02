@@ -176,6 +176,23 @@ The SNI you choose matters. Pick a website that:
 
 I use [globalping.io](https://www.globalping.io) to test website accessibility from different countries before choosing an SNI. Run an HTTP check from your target country to verify the decoy site responds normally there.
 
+### Testing with Globalping
+
+Before committing to a VPS or SNI choice, test that traffic can reach your server from your target country:
+
+1. Go to [globalping.io](https://www.globalping.io)
+2. Enter your VPS IP address as the target
+3. Select **Ping** as the test type
+4. In **Additional settings**, set:
+   - Protocol: `TCP`
+   - Port: `443`
+5. Choose probe servers from the country you'll be connecting from
+6. Run the test
+
+If the pings succeed, your VPS port 443 is reachable from that country. If they fail or time out, the IP range might be blocked.
+
+![Globalping Test](assets/globalping-test.png)
+
 ### My Configuration Choices
 
 ```json
