@@ -1,0 +1,35 @@
+# =============================================================================
+# im-preview.yaml - Infrastructure Manager Preview
+# =============================================================================
+# Runs Infrastructure Manager preview on pull requests to main.
+# Creates a preview deployment to validate Terraform changes.
+# =============================================================================
+
+steps:
+  # -------------------------------------------------------------------------
+  # Step 1: Create IM Preview
+  # -------------------------------------------------------------------------
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+    entrypoint: "bash"
+    env:
+      - "SHORT_SHA=$SHORT_SHA"
+      - "BUILD_ID=$BUILD_ID"
+      - "COMMIT_SHA=$COMMIT_SHA"
+    args:
+      - "-c"
+      - |-
+        set -euo pipefail
+        source cloudbuild/_env.sh
+
+        # Truncate BUILD_ID to keep total preview ID under 40 chars
+        PREVIEW_ID="preview-${SHORT_SHA}-${BUILD_ID:0:16}"
+
+        gcloud infra-manager previews create "projects/$${PROJECT_ID}/locations/$${LOCATION}/previews/$${PREVIEW_ID}" \
+          --service-account "projects/$${PROJECT_ID}/serviceAccounts/im-executor@$${PROJECT_ID}.iam.gserviceaccount.com" \
+          --git-source-repo="$${REPO_URI}" \
+          --git-source-directory="$${DEPLOYMENT_DIR}" \
+          --git-source-ref="$COMMIT_SHA" \
+          --input-values="project_id=$${PROJECT_ID},region=$${LOCATION}"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

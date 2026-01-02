@@ -1,0 +1,59 @@
+# =============================================================================
+# Ops Agent Configuration - VPS Logging
+# =============================================================================
+# Captures only Xray error logs for VPN debugging.
+# All default syslog collection is explicitly disabled.
+#
+# For non-GCP VMs, credentials are provided via service account key file
+# deployed at /etc/google-cloud-ops-agent/credentials.json
+# =============================================================================
+
+global:
+  default_self_log_file_collection: false
+
+# -----------------------------------------------------------------------------
+# Logging Configuration
+# -----------------------------------------------------------------------------
+logging:
+  receivers:
+    xray_error:
+      type: files
+      include_paths:
+        - /var/log/xray/error.log
+      record_log_file_path: true
+
+  processors:
+    add_node_id:
+      type: modify_fields
+      fields:
+        labels."node_id":
+          static_value: "${NODE_ID}"
+
+  service:
+    pipelines:
+      # Override default_pipeline to disable syslog collection
+      default_pipeline:
+        receivers: []
+        processors: []
+
+      # Error logs pipeline
+      xray_errors:
+        receivers:
+          - xray_error
+        processors:
+          - add_node_id
+
+# -----------------------------------------------------------------------------
+# Metrics Configuration
+# -----------------------------------------------------------------------------
+metrics:
+  receivers:
+    hostmetrics:
+      type: hostmetrics
+      collection_interval: 60s
+
+  service:
+    pipelines:
+      default_pipeline:
+        receivers:
+          - hostmetrics

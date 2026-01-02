@@ -1,0 +1,37 @@
+# =============================================================================
+# Fleet Inventory - VPS Server Definitions
+# =============================================================================
+# Defines all VPS nodes in the fleet with their connection and Xray settings.
+# Used by fleet-reconcile to deploy configuration to each server.
+# =============================================================================
+
+servers:
+  # ---------------------------------------------------------------------------
+  # Singapore Region
+  # ---------------------------------------------------------------------------
+  singapore-1:
+    host: YOUR_VPS_IP_1 # e.g., 103.167.150.168
+    port: 22
+    user: root
+    location: Singapore
+    sni: your-sni-domain.com # e.g., www.grab.com (a popular local site with HTTPS)
+    xray_port: 443
+    shortIds: # 16-char hex strings for Reality protocol
+      - "0123456789abcdef" # e.g., "c765df7b700b5712" - generate with: openssl rand -hex 8
+      - "fedcba9876543210"
+      - "1122334455667788"
+
+  # ---------------------------------------------------------------------------
+  # Tokyo Region
+  # ---------------------------------------------------------------------------
+  tokyo-1:
+    host: YOUR_VPS_IP_2 # e.g., 151.241.5.34
+    port: 22
+    user: root
+    location: Tokyo, Japan
+    sni: your-sni-domain.jp # e.g., www.sony.jp (a popular local site with HTTPS)
+    xray_port: 443
+    shortIds: # 16-char hex strings for Reality protocol
+      - "aabbccddeeff0011" # e.g., "9af06e219b51b310" - generate with: openssl rand -hex 8
+      - "2233445566778899"
+      - "99aabbccddeeff00"

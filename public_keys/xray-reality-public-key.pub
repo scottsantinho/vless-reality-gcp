@@ -1,0 +1,4 @@
+# Xray Reality public key (for client configuration)
+# Generate with: xray x25519 (outputs both private and public keys)
+# Example format: q85W5R9zBFen-mMgVcGxE3GZ79ns2XkF-rY7I8MhiHU
+YOUR_XRAY_REALITY_PUBLIC_KEY_HERE

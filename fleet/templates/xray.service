@@ -1,0 +1,51 @@
+# =============================================================================
+# Xray Systemd Service Unit
+# =============================================================================
+# Runs Xray as a hardened system service under the dedicated 'xray' user.
+# Only CAP_NET_BIND_SERVICE capability is granted (for port 443).
+# =============================================================================
+
+[Unit]
+Description=Xray Service
+Documentation=https://github.com/XTLS/Xray-core
+After=network.target nss-lookup.target
+
+[Service]
+Type=simple
+User=xray
+Group=xray
+
+# Capabilities - only allow binding to privileged ports
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+# Filesystem sandboxing
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/log/xray /opt/xray
+
+# Network and kernel hardening
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+
+# Execution
+ExecStart=/opt/xray/xray run -config /opt/xray/config.json
+Restart=on-failure
+RestartPreventExitStatus=23
+LimitNPROC=10000
+LimitNOFILE=1000000
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xray
+
+[Install]
+WantedBy=multi-user.target

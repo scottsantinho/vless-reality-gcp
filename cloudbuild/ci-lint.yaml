@@ -1,0 +1,91 @@
+# =============================================================================
+# ci-lint.yaml - Code Quality and Security Gates
+# =============================================================================
+# Triggered on pull requests to validate code quality before merge.
+# Runs: terraform fmt/validate, tflint, tfsec, shellcheck, gitleaks
+# =============================================================================
+
+steps:
+  # -------------------------------------------------------------------------
+  # Step 1: Terraform Format Check
+  # -------------------------------------------------------------------------
+  - name: "hashicorp/terraform:1.6"
+    id: "terraform-fmt"
+    entrypoint: "sh"
+    args:
+      - "-c"
+      - |
+        echo "[INFO] Checking Terraform formatting..."
+        cd infra/terraform/envs/prod
+        terraform fmt -check -recursive -diff
+        echo "[SUCCESS] Terraform formatting OK"
+
+  # -------------------------------------------------------------------------
+  # Step 2: Terraform Validate
+  # -------------------------------------------------------------------------
+  - name: "hashicorp/terraform:1.6"
+    id: "terraform-validate"
+    entrypoint: "sh"
+    args:
+      - "-c"
+      - |
+        echo "[INFO] Validating Terraform configuration..."
+        cd infra/terraform/envs/prod
+        terraform init -backend=false
+        terraform validate
+        echo "[SUCCESS] Terraform configuration valid"
+
+  # -------------------------------------------------------------------------
+  # Step 3: TFLint
+  # -------------------------------------------------------------------------
+  - name: "ghcr.io/terraform-linters/tflint:latest"
+    id: "tflint"
+    entrypoint: "sh"
+    args:
+      - "-c"
+      - |
+        echo "[INFO] Running TFLint..."
+        cd infra/terraform/envs/prod
+        tflint --init
+        tflint --format=compact
+        echo "[SUCCESS] TFLint passed"
+
+  # -------------------------------------------------------------------------
+  # Step 4: TFSec Security Scan
+  # -------------------------------------------------------------------------
+  - name: "aquasec/tfsec:latest"
+    id: "tfsec"
+    entrypoint: "sh"
+    args:
+      - "-c"
+      - |
+        echo "[INFO] Running TFSec security scan..."
+        tfsec infra/terraform/envs/prod --format=lovely
+        echo "[SUCCESS] TFSec scan passed (no security issues found)"
+
+  # -------------------------------------------------------------------------
+  # Step 5: ShellCheck
+  # -------------------------------------------------------------------------
+  - name: "koalaman/shellcheck:stable"
+    id: "shellcheck"
+    entrypoint: "/bin/shellcheck"
+    args:
+      - "--external-sources"
+      - "fleet/scripts/setup-logging-agent.sh"
+      - "fleet/scripts/setup-xray.sh"
+      - "cloudbuild/_env.sh"
+
+  # -------------------------------------------------------------------------
+  # Step 6: Gitleaks Secret Scan
+  # -------------------------------------------------------------------------
+  - name: "zricethezav/gitleaks:latest"
+    id: "gitleaks"
+    entrypoint: "gitleaks"
+    args:
+      - "detect"
+      - "--source=."
+      - "--no-git"
+      - "--exit-code=1"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

@@ -1,0 +1,45 @@
+# =============================================================================
+# im-apply.yaml - Infrastructure Manager Apply
+# =============================================================================
+# Runs Infrastructure Manager apply on merge to main.
+# Applies Terraform changes and triggers fleet-reconcile on success.
+# =============================================================================
+
+steps:
+  # -------------------------------------------------------------------------
+  # Step 1: Apply IM Deployment
+  # -------------------------------------------------------------------------
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+    entrypoint: "bash"
+    args:
+      - "-lc"
+      - |-
+        set -euo pipefail
+        source cloudbuild/_env.sh
+
+        gcloud infra-manager deployments apply "projects/$${PROJECT_ID}/locations/$${LOCATION}/deployments/$${DEPLOYMENT_ID}" \
+          --service-account "projects/$${PROJECT_ID}/serviceAccounts/im-executor@$${PROJECT_ID}.iam.gserviceaccount.com" \
+          --git-source-repo="$${REPO_URI}" \
+          --git-source-directory="$${DEPLOYMENT_DIR}" \
+          --git-source-ref="$COMMIT_SHA" \
+          --input-values="project_id=$${PROJECT_ID},region=$${LOCATION}"
+
+  # -------------------------------------------------------------------------
+  # Step 2: Trigger Fleet Reconcile
+  # -------------------------------------------------------------------------
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -euo pipefail
+        source cloudbuild/_env.sh
+        echo "[INFO] Triggering fleet-reconcile after successful IM apply..."
+        gcloud builds triggers run "$${FLEET_TRIGGER}" \
+          --project="$${PROJECT_ID}" \
+          --region="$${LOCATION}" \
+          --branch=main
+        echo "[SUCCESS] $${FLEET_TRIGGER} trigger invoked"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

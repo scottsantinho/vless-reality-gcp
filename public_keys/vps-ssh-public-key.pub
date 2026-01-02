@@ -1,0 +1,4 @@
+# SSH public key for VPS fleet deployment
+# Generate with: ssh-keygen -t ed25519 -C "vps-fleet-deploy" -f ~/.ssh/vps-fleet-deploy
+# Example format: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... vps-fleet-deploy
+ssh-ed25519 YOUR_SSH_PUBLIC_KEY_HERE vps-fleet-deploy

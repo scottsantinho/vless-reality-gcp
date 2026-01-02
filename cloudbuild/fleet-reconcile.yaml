@@ -1,0 +1,261 @@
+# =============================================================================
+# fleet-reconcile.yaml - Deploy Configuration to VPS Fleet
+# =============================================================================
+# Triggered manually or by im-apply after successful Terraform deployment.
+# Deploys Ops Agent and Xray configuration to all VPS nodes.
+# =============================================================================
+
+steps:
+  # -------------------------------------------------------------------------
+  # Step 1: Fetch Secrets
+  # -------------------------------------------------------------------------
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+    id: "fetch-secrets"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -euo pipefail
+        source cloudbuild/_env.sh
+        echo "[INFO] Fetching secrets from Secret Manager..."
+
+        # Create secrets directory
+        umask 077
+        mkdir -p /workspace/secrets
+
+        # Fetch SSH private key
+        gcloud secrets versions access latest \
+          --secret="vps-ssh-private-key" \
+          --project="$${PROJECT_ID}" > /workspace/secrets/ssh_key
+        chmod 600 /workspace/secrets/ssh_key
+
+        # Fetch Xray secrets
+        gcloud secrets versions access latest \
+          --secret="xray-reality-private-key" \
+          --project="$${PROJECT_ID}" > /workspace/secrets/xray_private_key
+
+        gcloud secrets versions access latest \
+          --secret="xray-uuid" \
+          --project="$${PROJECT_ID}" > /workspace/secrets/xray_uuid
+
+        # Fetch Ops Agent SA key (for non-GCP VMs to authenticate with Cloud Logging)
+        gcloud secrets versions access latest \
+          --secret="vps-logging-agent-key" \
+          --project="$${PROJECT_ID}" > /workspace/secrets/ops_agent_key.json
+
+        # Fetch SSH host keys for MITM-resistant host verification
+        gcloud secrets versions access latest \
+          --secret="vps-ssh-host-keys" \
+          --project="$${PROJECT_ID}" > /workspace/secrets/known_hosts
+
+        chmod 600 /workspace/secrets/*
+
+        echo "[SUCCESS] Secrets fetched"
+
+  # -------------------------------------------------------------------------
+  # Step 2: Deploy to Fleet
+  # -------------------------------------------------------------------------
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+    id: "deploy-to-fleet"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -euo pipefail
+        source cloudbuild/_env.sh
+
+        cleanup() {
+          rm -rf /workspace/secrets
+          rm -f /tmp/xray-config-*.json /tmp/ops-agent-config-*.yaml
+        }
+        trap cleanup EXIT
+
+        # =====================================================================
+        # Install Dependencies
+        # =====================================================================
+        echo "[INFO] Installing dependencies..."
+        apt-get update -qq && apt-get install -y -qq jq openssh-client gettext-base
+
+        # Install yq for reliable YAML parsing
+        YQ_VERSION="v4.40.5"
+        YQ_SHA256="0d6aaf1cf44a8d18fbc7ed0ef14f735a8df8d2e314c4cc0f0242d35c0a440c95"
+        curl -sSL "https://github.com/mikefarah/yq/releases/download/$${YQ_VERSION}/yq_linux_amd64" -o /tmp/yq
+        echo "$${YQ_SHA256}  /tmp/yq" | sha256sum -c -
+        install -m 0755 /tmp/yq /usr/local/bin/yq
+        rm -f /tmp/yq
+
+        # =====================================================================
+        # Read Secrets
+        # =====================================================================
+        SSH_KEY="/workspace/secrets/ssh_key"
+        XRAY_PRIVATE_KEY=$$(cat /workspace/secrets/xray_private_key)
+        XRAY_UUID=$$(cat /workspace/secrets/xray_uuid)
+
+        export XRAY_PRIVATE_KEY XRAY_UUID
+
+        # =====================================================================
+        # Parse Fleet Inventory
+        # =====================================================================
+        echo "[INFO] Parsing fleet inventory..."
+
+        SERVERS=$$(yq '.servers | keys | .[]' fleet/servers.yaml)
+        SERVER_COUNT=$$(echo "$$SERVERS" | wc -l | tr -d ' ')
+
+        if [ "$$SERVER_COUNT" -eq 0 ]; then
+            echo "[ERROR] No servers found in fleet/servers.yaml"
+            exit 1
+        fi
+
+        echo "[INFO] Found $$SERVER_COUNT server(s) in inventory"
+
+        # =====================================================================
+        # Deployment Tracking
+        # =====================================================================
+        SUCCESS_COUNT=0
+        FAILED_SERVERS=""
+
+        # =====================================================================
+        # Deploy Function
+        # =====================================================================
+        deploy_to_server() {
+            local SERVER_ID="$$1"
+            
+            echo ""
+            echo "========================================"
+            echo "[INFO] Deploying to: $$SERVER_ID"
+            echo "========================================"
+            
+            # Extract server details using yq
+            local HOST=$$(yq ".servers.$${SERVER_ID}.host" fleet/servers.yaml)
+            local PORT=$$(yq ".servers.$${SERVER_ID}.port" fleet/servers.yaml)
+            local USER=$$(yq ".servers.$${SERVER_ID}.user" fleet/servers.yaml)
+            local SNI=$$(yq ".servers.$${SERVER_ID}.sni" fleet/servers.yaml)
+            local SERVER_XRAY_PORT=$$(yq ".servers.$${SERVER_ID}.xray_port" fleet/servers.yaml)
+            local SHORT_IDS=$$(yq ".servers.$${SERVER_ID}.shortIds" fleet/servers.yaml -o=json)
+            
+            # Validate required fields
+            if [ "$$HOST" = "null" ] || [ -z "$$HOST" ]; then
+                echo "[ERROR] Missing 'host' for $$SERVER_ID"
+                return 1
+            fi
+            if [ "$$PORT" = "null" ] || [ -z "$$PORT" ]; then
+                echo "[ERROR] Missing 'port' for $$SERVER_ID"
+                return 1
+            fi
+            if [ "$$USER" = "null" ] || [ -z "$$USER" ]; then
+                echo "[ERROR] Missing 'user' for $$SERVER_ID"
+                return 1
+            fi
+            
+            # Set defaults for optional fields
+            [ "$$SNI" = "null" ] && SNI="www.microsoft.com"
+            [ "$$SERVER_XRAY_PORT" = "null" ] && SERVER_XRAY_PORT="443"
+            [ "$$SHORT_IDS" = "null" ] && SHORT_IDS='["0123456789abcdef"]'
+            
+            # Export for envsubst
+            export XRAY_SNI="$$SNI"
+            export XRAY_PORT="$$SERVER_XRAY_PORT"
+            export XRAY_SHORT_IDS="$$SHORT_IDS"
+            export NODE_ID="$$SERVER_ID"
+            export GCP_PROJECT_ID="$${PROJECT_ID}"
+            
+            # SSH options (using pinned host keys for MITM protection)
+            local SSH_OPTS="-o StrictHostKeyChecking=yes -o UserKnownHostsFile=/workspace/secrets/known_hosts -o ConnectTimeout=30 -i $$SSH_KEY -p $$PORT"
+            local SCP_OPTS="-o StrictHostKeyChecking=yes -o UserKnownHostsFile=/workspace/secrets/known_hosts -o ConnectTimeout=30 -i $$SSH_KEY -P $$PORT"
+            
+            # Copy scripts and templates to VPS
+            echo "[INFO] Copying files to VPS..."
+            scp $$SCP_OPTS fleet/scripts/setup-logging-agent.sh $${USER}@$${HOST}:/tmp/ || return 1
+            scp $$SCP_OPTS fleet/scripts/setup-xray.sh $${USER}@$${HOST}:/tmp/ || return 1
+            scp $$SCP_OPTS fleet/templates/xray.service $${USER}@$${HOST}:/tmp/ || return 1
+            scp $$SCP_OPTS fleet/templates/xray-logrotate.conf $${USER}@$${HOST}:/tmp/ || return 1
+            
+            # Copy Ops Agent SA key
+            scp $$SCP_OPTS /workspace/secrets/ops_agent_key.json $${USER}@$${HOST}:/tmp/ops_agent_key.json || return 1
+            
+            # Generate config from template and copy
+            envsubst < fleet/templates/xray-config.json.tpl > /tmp/xray-config-$${SERVER_ID}.json
+            scp $$SCP_OPTS /tmp/xray-config-$${SERVER_ID}.json $${USER}@$${HOST}:/tmp/xray-config.json.tpl || return 1
+            rm -f /tmp/xray-config-$${SERVER_ID}.json
+            
+            # Generate ops-agent config and copy
+            envsubst < fleet/templates/ops-agent-config.yaml > /tmp/ops-agent-config-$${SERVER_ID}.yaml
+            scp $$SCP_OPTS /tmp/ops-agent-config-$${SERVER_ID}.yaml $${USER}@$${HOST}:/tmp/ops-agent-config.yaml || return 1
+            rm -f /tmp/ops-agent-config-$${SERVER_ID}.yaml
+            
+            # Run Ops Agent setup
+            echo "[INFO] Running Ops Agent setup..."
+            ssh $$SSH_OPTS $${USER}@$${HOST} "chmod +x /tmp/setup-logging-agent.sh && /tmp/setup-logging-agent.sh" || return 1
+            
+            # Deploy Ops Agent credentials and config if installed
+            ssh $$SSH_OPTS $${USER}@$${HOST} "if [ -d /etc/google-cloud-ops-agent ]; then \
+              mkdir -p /etc/google-cloud-ops-agent; \
+              cp /tmp/ops_agent_key.json /etc/google-cloud-ops-agent/credentials.json; \
+              chmod 600 /etc/google-cloud-ops-agent/credentials.json; \
+              cp /tmp/ops-agent-config.yaml /etc/google-cloud-ops-agent/config.yaml; \
+              systemctl restart google-cloud-ops-agent; \
+            fi" || true
+            
+            # Create secrets file locally
+            echo "[INFO] Creating secrets file for secure transfer..."
+            cat > /tmp/xray-secrets-$${SERVER_ID}.env << SECRETS_EOF
+            export XRAY_PRIVATE_KEY='$$XRAY_PRIVATE_KEY'
+            export XRAY_UUID='$$XRAY_UUID'
+            export XRAY_SNI='$$SNI'
+            export XRAY_PORT='$$SERVER_XRAY_PORT'
+        SECRETS_EOF
+            
+            # Copy secrets file to VPS
+            scp $$SCP_OPTS /tmp/xray-secrets-$${SERVER_ID}.env $${USER}@$${HOST}:/tmp/.xray-secrets || return 1
+            
+            # Clean up local secrets file
+            rm -f /tmp/xray-secrets-$${SERVER_ID}.env
+            
+            # Run Xray setup
+            echo "[INFO] Running Xray setup..."
+            ssh $$SSH_OPTS $${USER}@$${HOST} "chmod 600 /tmp/.xray-secrets && \
+              source /tmp/.xray-secrets && \
+              chmod +x /tmp/setup-xray.sh && \
+              /tmp/setup-xray.sh && \
+              shred -u /tmp/.xray-secrets 2>/dev/null || rm -f /tmp/.xray-secrets" || return 1
+            
+            echo "[SUCCESS] Deployed to $$SERVER_ID"
+            return 0
+        }
+
+        # =====================================================================
+        # Main Deployment Loop
+        # =====================================================================
+        for SERVER_ID in $$SERVERS; do
+            if deploy_to_server "$$SERVER_ID"; then
+                SUCCESS_COUNT=$$((SUCCESS_COUNT + 1))
+            else
+                FAILED_SERVERS="$$FAILED_SERVERS $$SERVER_ID"
+                echo "[ERROR] Failed to deploy to $$SERVER_ID"
+            fi
+        done
+
+        # =====================================================================
+        # Deployment Summary
+        # =====================================================================
+        echo ""
+        echo "========================================"
+        echo "[SUMMARY] Deployment Results"
+        echo "========================================"
+        echo "  Total servers:  $$SERVER_COUNT"
+        echo "  Succeeded:      $$SUCCESS_COUNT"
+        echo "  Failed:         $$((SERVER_COUNT - SUCCESS_COUNT))"
+
+        if [ -n "$$FAILED_SERVERS" ]; then
+            echo ""
+            echo "[ERROR] Failed servers:$$FAILED_SERVERS"
+            echo "========================================"
+            exit 1
+        fi
+
+        echo ""
+        echo "[SUCCESS] All $$SERVER_COUNT server(s) deployed successfully!"
+        echo "========================================"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
