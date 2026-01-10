@@ -59,6 +59,89 @@ After the bootstrap, I use Terraform `import` blocks to bring existing resources
 
 ---
 
+## VPS SSH Key Setup
+
+Since VPS instances are manually provisioned, you need to generate an SSH key pair and install the public key on each server. This enables the CI/CD pipeline to deploy configurations without password authentication.
+
+### Generating SSH Keys
+
+Generate an Ed25519 key pair (recommended for modern systems):
+
+```bash
+# Using ssh-keygen (standard approach)
+ssh-keygen -t ed25519 -C "deploy@vless-reality" -f ~/.ssh/vps_deploy_key
+```
+
+Or using OpenSSL to generate an RSA key pair:
+
+```bash
+# Generate RSA private key
+openssl genrsa -out ~/.ssh/vps_deploy_key 4096
+
+# Extract public key in SSH format
+ssh-keygen -y -f ~/.ssh/vps_deploy_key > ~/.ssh/vps_deploy_key.pub
+
+# Set correct permissions
+chmod 600 ~/.ssh/vps_deploy_key
+chmod 644 ~/.ssh/vps_deploy_key.pub
+```
+
+### Adding the Public Key to Your VPS
+
+1. **Connect to the VPS using root credentials** (provided by your VPS provider):
+
+```bash
+ssh root@<your-vps-ip>
+# Enter the password from your VPS provider's dashboard
+```
+
+2. **Add your public key to authorized_keys**:
+
+```bash
+# Create .ssh directory if it doesn't exist
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+
+# Add your public key (copy the content of vps_deploy_key.pub)
+echo "ssh-ed25519 AAAA... deploy@vless-reality" >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+3. **Test key-based authentication** (from your local machine):
+
+```bash
+ssh -i ~/.ssh/vps_deploy_key root@<your-vps-ip>
+```
+
+4. **(Optional) Disable password authentication** for improved security:
+
+```bash
+# On the VPS, edit sshd_config
+sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+
+# Restart SSH service
+systemctl restart sshd
+```
+
+### Storing the Private Key in Secret Manager
+
+Once the key is tested, store the private key in GCP Secret Manager so the CI/CD pipeline can access it:
+
+```bash
+# Create the secret
+gcloud secrets create vps-ssh-private-key \
+    --replication-policy="automatic"
+
+# Add the private key as a version
+gcloud secrets versions add vps-ssh-private-key \
+    --data-file="$HOME/.ssh/vps_deploy_key"
+```
+
+The `fleet-reconcile` trigger uses this secret to authenticate with each VPS during deployments.
+
+---
+
 ## Security Choices
 
 ### Principle of Least Privilege (PoLP)
